@@ -1,3 +1,5 @@
+// Chargement des données et création du graphique
+
 d3.text("../insertion_master.txt", function(error, rawData) {
     if (error) throw error;
 
@@ -10,20 +12,16 @@ d3.text("../insertion_master.txt", function(error, rawData) {
         if (match) {
             const annee = match[1];
             const etablissement = match[2];
-            let reste = match[3]; // Le reste des colonnes
+            let reste = match[3];
 
-            // Séparer toutes les colonnes avec espaces multiples
             let resteCols = reste.split(/\s{2,}/);
 
-            // Re-splitter les colonnes numériques mal formées
             let nouvellesColonnes = [];
             resteCols.forEach((col, index) => {
                 if (index >= 2) {
-                    // Cas 1 : Deux nombres collés → Séparation
                     if (col.includes(" ") && /\d \d/.test(col)) {
                         nouvellesColonnes.push(...col.split(/\s+/));
                     }
-                    // Cas 2 : Nombre suivi de "ns" → Séparation
                     else if (col.match(/^\d+\s+ns$/)) {
                         nouvellesColonnes.push(...col.split(/\s+/));
                     }
@@ -36,9 +34,15 @@ d3.text("../insertion_master.txt", function(error, rawData) {
             });
 
             let cols = [annee, etablissement, ...nouvellesColonnes];
-            while (cols.length < 20) {
-                cols.push('');
-            }
+            while (cols.length < 20) cols.push('');
+
+            const totalPersonnes = parseInt(cols[6]) || 0;
+            const femmes = parseInt(cols[20]) || 0;
+            const hommes = totalPersonnes - femmes;
+
+            const tauxInsertionTotal = cols[9] === "ns" ? "ns" : parseFloat(cols[9]);
+            const tauxInsertionFemmes = tauxInsertionTotal === "ns" || (femmes + hommes === 0) ? "ns" : (tauxInsertionTotal * femmes) / (femmes + hommes);
+            const tauxInsertionHommes = tauxInsertionTotal === "ns" || (femmes + hommes === 0) ? "ns" : (tauxInsertionTotal * hommes) / (femmes + hommes);
 
             data.push({
                 annee: cols[0],
@@ -47,37 +51,23 @@ d3.text("../insertion_master.txt", function(error, rawData) {
                 domaine: cols[3],
                 discipline: cols[4],
                 situation: cols[5],
-                tauxInsertion: cols[9] === "ns" ? "ns" : parseFloat(cols[9]),
-                femmes: parseInt(cols[20]) || 0,
-                hommes: (parseInt(cols[6]) || 0) - (parseInt(cols[20]) || 0)
+                tauxInsertionFemmes: tauxInsertionFemmes,
+                tauxInsertionHommes: tauxInsertionHommes,
+                femmes: femmes,
+                hommes: hommes
             });
         }
     });
 
     console.log("Données extraites :", data);
 
-    // Remplissage des menus déroulants
     var etablissements = [...new Set(data.map(d => d.etablissement))];
     var disciplines = [...new Set(data.map(d => d.discipline))];
     var sexes = ["Femmes", "Hommes"];
 
-    d3.select("#selectEtablissement")
-        .selectAll("option")
-        .data(etablissements)
-        .enter().append("option")
-        .text(d => d);
-
-    d3.select("#selectDiscipline")
-        .selectAll("option")
-        .data(disciplines)
-        .enter().append("option")
-        .text(d => d);
-
-    d3.select("#selectSexe")
-        .selectAll("option")
-        .data(sexes)
-        .enter().append("option")
-        .text(d => d);
+    d3.select("#selectEtablissement").selectAll("option").data(etablissements).enter().append("option").text(d => d);
+    d3.select("#selectDiscipline").selectAll("option").data(disciplines).enter().append("option").text(d => d);
+    d3.select("#selectSexe").selectAll("option").data(sexes).enter().append("option").text(d => d);
 
     function updateChart() {
         var selectedEtab = d3.select("#selectEtablissement").node().value;
@@ -106,7 +96,7 @@ d3.text("../insertion_master.txt", function(error, rawData) {
             .padding(0.2);
 
         var yScale = d3.scaleLinear()
-            .domain([0, d3.max(filteredData, d => d.tauxInsertion !== "ns" ? d.tauxInsertion : 0) || 100])
+            .domain([0, 100])
             .nice()
             .range([height, 0]);
 
@@ -118,17 +108,21 @@ d3.text("../insertion_master.txt", function(error, rawData) {
             .call(d3.axisLeft(yScale));
 
         g.selectAll(".bar")
-            .data(filteredData.filter(d => d.tauxInsertion !== "ns"))
+            .data(filteredData.filter(d => {
+                return selectedSexe === "Femmes" ? d.tauxInsertionFemmes !== "ns" : d.tauxInsertionHommes !== "ns";
+            }))
             .enter().append("rect")
             .attr("class", "bar")
             .attr("x", d => xScale(d.annee))
-            .attr("y", d => yScale(d.tauxInsertion))
-            .attr("height", d => height - yScale(d.tauxInsertion))
+            .attr("y", d => yScale(selectedSexe === "Femmes" ? d.tauxInsertionFemmes : d.tauxInsertionHommes))
+            .attr("height", d => height - yScale(selectedSexe === "Femmes" ? d.tauxInsertionFemmes : d.tauxInsertionHommes))
             .attr("width", xScale.bandwidth())
             .attr("fill", selectedSexe === "Femmes" ? "pink" : "blue");
 
         g.selectAll(".text")
-            .data(filteredData.filter(d => d.tauxInsertion === "ns"))
+            .data(filteredData.filter(d => {
+                return selectedSexe === "Femmes" ? d.tauxInsertionFemmes === "ns" : d.tauxInsertionHommes === "ns";
+            }))
             .enter().append("text")
             .attr("x", d => xScale(d.annee) + xScale.bandwidth() / 2)
             .attr("y", height / 2)
