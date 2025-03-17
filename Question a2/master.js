@@ -1,0 +1,146 @@
+d3.text("../insertion_master.txt", function(error, rawData) {
+    if (error) throw error;
+
+    var lines = rawData.split("\n").slice(1); // Ignorer l'en-tête
+    var data = [];
+
+    lines.forEach(line => {
+        var match = line.trim().match(/^(\d{4})\s+(.+?)\s{2,}(.+)$/);
+
+        if (match) {
+            const annee = match[1];
+            const etablissement = match[2];
+            let reste = match[3]; // Le reste des colonnes
+
+            // Séparer toutes les colonnes avec espaces multiples
+            let resteCols = reste.split(/\s{2,}/);
+
+            // Re-splitter les colonnes numériques mal formées
+            let nouvellesColonnes = [];
+            resteCols.forEach((col, index) => {
+                if (index >= 2) {
+                    // Cas 1 : Deux nombres collés → Séparation
+                    if (col.includes(" ") && /\d \d/.test(col)) {
+                        nouvellesColonnes.push(...col.split(/\s+/));
+                    }
+                    // Cas 2 : Nombre suivi de "ns" → Séparation
+                    else if (col.match(/^\d+\s+ns$/)) {
+                        nouvellesColonnes.push(...col.split(/\s+/));
+                    }
+                    else {
+                        nouvellesColonnes.push(col);
+                    }
+                } else {
+                    nouvellesColonnes.push(col);
+                }
+            });
+
+            let cols = [annee, etablissement, ...nouvellesColonnes];
+            while (cols.length < 20) {
+                cols.push('');
+            }
+
+            data.push({
+                annee: cols[0],
+                etablissement: cols[1],
+                academie: cols[2],
+                domaine: cols[3],
+                discipline: cols[4],
+                situation: cols[5],
+                tauxInsertion: cols[9] === "ns" ? "ns" : parseFloat(cols[9]),
+                femmes: parseInt(cols[20]) || 0,
+                hommes: (parseInt(cols[6]) || 0) - (parseInt(cols[20]) || 0)
+            });
+        }
+    });
+
+    console.log("Données extraites :", data);
+
+    // Remplissage des menus déroulants
+    var etablissements = [...new Set(data.map(d => d.etablissement))];
+    var disciplines = [...new Set(data.map(d => d.discipline))];
+    var sexes = ["Femmes", "Hommes"];
+
+    d3.select("#selectEtablissement")
+        .selectAll("option")
+        .data(etablissements)
+        .enter().append("option")
+        .text(d => d);
+
+    d3.select("#selectDiscipline")
+        .selectAll("option")
+        .data(disciplines)
+        .enter().append("option")
+        .text(d => d);
+
+    d3.select("#selectSexe")
+        .selectAll("option")
+        .data(sexes)
+        .enter().append("option")
+        .text(d => d);
+
+    function updateChart() {
+        var selectedEtab = d3.select("#selectEtablissement").node().value;
+        var selectedDisc = d3.select("#selectDiscipline").node().value;
+        var selectedSexe = d3.select("#selectSexe").node().value;
+
+        var filteredData = data.filter(d => d.etablissement === selectedEtab && d.discipline === selectedDisc);
+
+        if (filteredData.length === 0) {
+            console.warn("⚠️ Aucune donnée trouvée pour cette sélection !");
+            return;
+        }
+
+        var svg = d3.select("#svgSexe");
+        svg.selectAll("*").remove();
+
+        var margin = {top: 20, right: 20, bottom: 100, left: 60},
+            width = 800 - margin.left - margin.right,
+            height = 500 - margin.top - margin.bottom;
+
+        var g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+
+        var xScale = d3.scaleBand()
+            .domain(filteredData.map(d => d.annee))
+            .range([0, width])
+            .padding(0.2);
+
+        var yScale = d3.scaleLinear()
+            .domain([0, d3.max(filteredData, d => d.tauxInsertion !== "ns" ? d.tauxInsertion : 0) || 100])
+            .nice()
+            .range([height, 0]);
+
+        g.append("g")
+            .attr("transform", `translate(0, ${height})`)
+            .call(d3.axisBottom(xScale));
+
+        g.append("g")
+            .call(d3.axisLeft(yScale));
+
+        g.selectAll(".bar")
+            .data(filteredData.filter(d => d.tauxInsertion !== "ns"))
+            .enter().append("rect")
+            .attr("class", "bar")
+            .attr("x", d => xScale(d.annee))
+            .attr("y", d => yScale(d.tauxInsertion))
+            .attr("height", d => height - yScale(d.tauxInsertion))
+            .attr("width", xScale.bandwidth())
+            .attr("fill", selectedSexe === "Femmes" ? "pink" : "blue");
+
+        g.selectAll(".text")
+            .data(filteredData.filter(d => d.tauxInsertion === "ns"))
+            .enter().append("text")
+            .attr("x", d => xScale(d.annee) + xScale.bandwidth() / 2)
+            .attr("y", height / 2)
+            .attr("text-anchor", "middle")
+            .style("fill", "red")
+            .style("font-size", "12px")
+            .text("Taux non renseigné");
+    }
+
+    d3.select("#selectEtablissement").on("change", updateChart);
+    d3.select("#selectDiscipline").on("change", updateChart);
+    d3.select("#selectSexe").on("change", updateChart);
+
+    updateChart();
+});
