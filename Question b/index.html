@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nuage de points - Analyse des disciplines</title>
+  <script src="https://d3js.org/d3.v4.min.js"></script>
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css">
+  <style>
+    .tooltip {
+      position: absolute;
+      background-color: white;
+      border: 1px solid #ccc;
+      padding: 5px;
+      font-size: 12px;
+      pointer-events: none;
+      opacity: 0;
+    }
+  </style>
+</head>
+<body>
+<div class="container mt-4">
+  <h1 class="text-center">Analyse des disciplines en fonction des caractéristiques</h1>
+  <div id="chart" class="d-flex justify-content-center mt-4"></div>
+  <div class="tooltip"></div>
+</div>
+<script src="question_b.js"></script>
+</body>
+</html>
