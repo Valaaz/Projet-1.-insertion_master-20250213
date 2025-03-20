@@ -1,48 +1,302 @@
 <!DOCTYPE html>
 <html lang="fr">
-
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-  <script src="https://d3js.org/d3.v4.min.js"></script>
-  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css"
-        integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh" crossorigin="anonymous">
-  <title>Évolution du taux d'insertion par sexe</title>
+  <title>Evolution du taux d'insertion (Etablissement + Discipline) par sexe</title>
+  <script src="https://d3js.org/d3.v6.min.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 20px;
+    }
+    #controls {
+      margin-bottom: 15px;
+    }
+    .chart {
+      border: 1px solid #ccc;
+    }
+    .axis path,
+    .axis line {
+      fill: none;
+      stroke: #000;
+      shape-rendering: crispEdges;
+    }
+    /* Légende */
+    #legend {
+      margin-top: 10px;
+    }
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      margin-right: 15px;
+      font-size: 14px;
+    }
+    .legend-color {
+      width: 12px;
+      height: 12px;
+      margin-right: 5px;
+      display: inline-block;
+    }
+  </style>
 </head>
-
 <body>
-<div class="container">
-  <h1>Évolution du taux d'insertion par établissement, discipline et sexe</h1>
 
-  <!-- Sélection de l'établissement -->
-  <label for="selectEtablissement">Choisir un établissement :</label>
-  <select id="selectEtablissement" class="form-control"></select>
+<h1>Evolution du taux d'insertion par sexe</h1>
 
-  <!-- Sélection de la discipline -->
-  <label for="selectDiscipline">Choisir une discipline :</label>
-  <select id="selectDiscipline" class="form-control"></select>
+<div id="controls">
+  <label for="etabSelect">Etablissement :</label>
+  <select id="etabSelect"></select>
 
-  <!-- Sélection du sexe -->
-  <label for="selectSexe">Choisir un sexe :</label>
-  <select id="selectSexe" class="form-control"></select>
-
+  <label for="discSelect">Discipline :</label>
+  <select id="discSelect"></select>
 </div>
 
-<div class="container">
-  <div class="row">
-    <div class="col-xs-12 col-md-10 col-lg-10">
-      <svg id="svgSexe" width="100%" height="500"></svg>
-    </div>
-  </div>
-</div>
+<svg id="chart" width="700" height="400" class="chart"></svg>
 
-<script src="master.js"></script>
-<script src="https://code.jquery.com/jquery-3.4.1.slim.min.js"
-        integrity="sha384-J6qa4849blE2+poT4WnyKhv5vZF5SrPo0iEjwBvKU7imGFAV0wwj1yYfoRSJoZ+n"
-        crossorigin="anonymous"></script>
-<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/js/bootstrap.min.js"
-        integrity="sha384-wfSDF2E50Y2D1uUdj0O3uMBJnjuUD4Ih7YwaYd1iqfktj0Uod8GCExl3Og8ifwB6"
-        crossorigin="anonymous"></script>
+<div id="legend"></div>
+
+<script>
+  // Dimensions du graphique
+  const margin = { top: 30, right: 30, bottom: 30, left: 50 },
+          width  = 700 - margin.left - margin.right,
+          height = 400 - margin.top - margin.bottom;
+
+  // Couleurs pour Femmes/Hommes
+  const colorFemmes = "steelblue";
+  const colorHommes = "tomato";
+
+  // Sélection du conteneur principal SVG
+  const svg = d3.select("#chart")
+          .append("g")
+          .attr("transform", `translate(${margin.left},${margin.top})`);
+
+  // Groupes d'axes
+  let xAxisGroup = svg.append("g")
+          .attr("class", "x axis")
+          .attr("transform", `translate(0,${height})`);
+  let yAxisGroup = svg.append("g")
+          .attr("class", "y axis");
+
+  // Echelles
+  let xScale = d3.scaleLinear().range([0, width]);
+  let yScale = d3.scaleLinear().range([height, 0]);
+
+  // Axes
+  let xAxis = d3.axisBottom(xScale).ticks(5).tickFormat(d3.format("d"));
+  // On fixe l'axe Y de 0 à 100
+  yScale.domain([0, 100]);
+  let yAxis = d3.axisLeft(yScale).ticks(5);
+
+  // Variables globales
+  let allData = [];
+  let allEtablissements = [];
+  let allDisciplines = [];
+
+  // Charger le fichier insertion_master.txt
+  d3.text("insertion_master.txt").then(function(rawData) {
+    let lines = rawData.split("\n").slice(1); // Ignorer l'en-tête
+    let data = [];
+
+    lines.forEach(line => {
+      var match = line.trim().match(/^(\d{4})\s+(.+?)\s{2,}(.+)$/);
+      if (match) {
+        const annee = match[1];
+        const etablissement = match[2];
+        let reste = match[3];
+
+        let resteCols = reste.split(/\s{2,}/);
+        let nouvellesColonnes = [];
+        resteCols.forEach((col, index) => {
+          if (index >= 2) {
+            if (col.includes(" ") && /\d \d/.test(col)) {
+              nouvellesColonnes.push(...col.split(/\s+/));
+            } else if (col.match(/^\d+\s+ns$/)) {
+              nouvellesColonnes.push(...col.split(/\s+/));
+            } else {
+              nouvellesColonnes.push(col);
+            }
+          } else {
+            nouvellesColonnes.push(col);
+          }
+        });
+
+        let cols = [annee, etablissement, ...nouvellesColonnes];
+        while (cols.length < 21) cols.push(''); // S'assurer d'avoir la col[20] pour Femmes
+
+        const totalPersonnes = parseInt(cols[6]) || 0;
+        const femmesCount    = parseInt(cols[20]) || 0;
+        const hommesCount    = totalPersonnes - femmesCount;
+        const tauxInsertionTotal = cols[9] === "ns" ? null : parseFloat(cols[9]);
+
+        let tauxInsertionFemmes = null;
+        let tauxInsertionHommes = null;
+        if (tauxInsertionTotal !== null && (femmesCount + hommesCount) > 0) {
+          tauxInsertionFemmes = tauxInsertionTotal * (femmesCount / (femmesCount + hommesCount));
+          tauxInsertionHommes = tauxInsertionTotal * (hommesCount / (femmesCount + hommesCount));
+        }
+
+        data.push({
+          annee: +annee,
+          etablissement: cols[1],
+          academie: cols[2],
+          domaine: cols[3],
+          discipline: cols[4],
+          situation: cols[5],
+          nb_reponse: totalPersonnes,
+          femmes: femmesCount,
+          hommes: hommesCount,
+          tauxInsertionFemmes: tauxInsertionFemmes,
+          tauxInsertionHommes: tauxInsertionHommes
+        });
+      }
+    });
+
+    // Filtrer les enregistrements où les taux sont définis ET compris entre 0 et 100
+    data = data.filter(d =>
+            d.tauxInsertionFemmes !== null && d.tauxInsertionHommes !== null &&
+            d.tauxInsertionFemmes >= 0 && d.tauxInsertionFemmes <= 100 &&
+            d.tauxInsertionHommes >= 0 && d.tauxInsertionHommes <= 100
+    );
+
+    // Stocker globalement
+    allData = data;
+
+    // Extraire la liste des établissements distincts
+    allEtablissements = Array.from(new Set(data.map(d => d.etablissement))).sort(d3.ascending);
+    // Extraire la liste des disciplines distinctes
+    allDisciplines = Array.from(new Set(data.map(d => d.discipline))).sort(d3.ascending);
+
+    // Remplir les menus
+    const etabSelect = d3.select("#etabSelect");
+    etabSelect.selectAll("option")
+            .data(allEtablissements)
+            .enter()
+            .append("option")
+            .attr("value", d => d)
+            .text(d => d);
+
+    const discSelect = d3.select("#discSelect");
+    discSelect.selectAll("option")
+            .data(allDisciplines)
+            .enter()
+            .append("option")
+            .attr("value", d => d)
+            .text(d => d);
+
+    // Par défaut, choisir le premier établissement et la première discipline
+    const defaultEtab = allEtablissements[0];
+    const defaultDisc = allDisciplines[0];
+    renderChart(defaultEtab, defaultDisc);
+
+    // Gérer le changement de sélection
+    etabSelect.on("change", function() {
+      const eVal = this.value;
+      const dVal = discSelect.node().value;
+      renderChart(eVal, dVal);
+    });
+    discSelect.on("change", function() {
+      const dVal = this.value;
+      const eVal = etabSelect.node().value;
+      renderChart(eVal, dVal);
+    });
+
+    // Légende : Femmes / Hommes
+    d3.select("#legend").html(`
+      <div class="legend-item">
+        <div class="legend-color" style="background-color:${colorFemmes};"></div>
+        <span>Femmes</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background-color:${colorHommes};"></div>
+        <span>Hommes</span>
+      </div>
+    `);
+
+  }).catch(err => {
+    console.error("Erreur chargement du fichier:", err);
+  });
+
+  // Fonction pour mettre à jour le graphique en fonction de l'établissement et de la discipline
+  function renderChart(etab, disc) {
+    // Filtrer les données
+    let filtered = allData.filter(d => d.etablissement === etab && d.discipline === disc);
+
+    // Agréger par année (moyenne des taux si plusieurs enregistrements par année)
+    let grouped = d3.groups(filtered, d => d.annee).map(([year, arr]) => {
+      return {
+        annee: +year,
+        femmes: d3.mean(arr, x => x.tauxInsertionFemmes),
+        hommes: d3.mean(arr, x => x.tauxInsertionHommes)
+      };
+    });
+    // Trier par année
+    grouped.sort((a, b) => a.annee - b.annee);
+
+    // Domaine X basé sur les années, domaine Y fixé de 0 à 100
+    xScale.domain(d3.extent(grouped, d => d.annee));
+    yScale.domain([0, 100]);
+
+    // Mettre à jour les axes
+    xAxisGroup.transition().call(xAxis);
+    yAxisGroup.transition().call(yAxis);
+
+    // Supprimer anciennes courbes
+    svg.selectAll(".line-femmes").remove();
+    svg.selectAll(".line-hommes").remove();
+    svg.selectAll(".point-femmes").remove();
+    svg.selectAll(".point-hommes").remove();
+
+    // Générateur de lignes
+    let lineFemmes = d3.line()
+            .defined(d => d.femmes !== null)
+            .x(d => xScale(d.annee))
+            .y(d => yScale(d.femmes));
+
+    let lineHommes = d3.line()
+            .defined(d => d.hommes !== null)
+            .x(d => xScale(d.annee))
+            .y(d => yScale(d.hommes));
+
+    // Courbe pour Femmes
+    svg.append("path")
+            .datum(grouped)
+            .attr("class", "line-femmes")
+            .attr("fill", "none")
+            .attr("stroke", colorFemmes)
+            .attr("stroke-width", 2)
+            .attr("d", lineFemmes);
+
+    // Courbe pour Hommes
+    svg.append("path")
+            .datum(grouped)
+            .attr("class", "line-hommes")
+            .attr("fill", "none")
+            .attr("stroke", colorHommes)
+            .attr("stroke-width", 2)
+            .attr("d", lineHommes);
+
+    // Points Femmes
+    svg.selectAll(".point-femmes")
+            .data(grouped.filter(d => d.femmes !== null))
+            .enter()
+            .append("circle")
+            .attr("class", "point-femmes")
+            .attr("cx", d => xScale(d.annee))
+            .attr("cy", d => yScale(d.femmes))
+            .attr("r", 3)
+            .attr("fill", colorFemmes);
+
+    // Points Hommes
+    svg.selectAll(".point-hommes")
+            .data(grouped.filter(d => d.hommes !== null))
+            .enter()
+            .append("circle")
+            .attr("class", "point-hommes")
+            .attr("cx", d => xScale(d.annee))
+            .attr("cy", d => yScale(d.hommes))
+            .attr("r", 3)
+            .attr("fill", colorHommes);
+  }
+</script>
 </body>
-
 </html>

@@ -1,29 +1,268 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Nuage de points - Analyse des disciplines</title>
-  <script src="https://d3js.org/d3.v4.min.js"></script>
-  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css">
+  <meta charset="utf-8">
+  <title>Analyse des profils des disciplines - Interactions</title>
+  <script src="https://d3js.org/d3.v6.min.js"></script>
   <style>
-    .tooltip {
+    body {
+      font-family: sans-serif;
+      margin: 20px;
+    }
+    .axis path,
+    .axis line {
+      fill: none;
+      stroke: #000;
+      shape-rendering: crispEdges;
+    }
+    .line {
+      fill: none;
+      stroke-width: 4; /* Épaisseur par défaut augmentée */
+      opacity: 0.7;
+      cursor: pointer;
+    }
+    text.label {
+      font-size: 12px;
+      text-anchor: middle;
+    }
+    /* Tooltip */
+    #tooltip {
       position: absolute;
-      background-color: white;
+      opacity: 0;
+      background-color: #fff;
       border: 1px solid #ccc;
       padding: 5px;
-      font-size: 12px;
       pointer-events: none;
-      opacity: 0;
+      font-size: 12px;
+    }
+    /* Légende */
+    #legendContainer {
+      margin-top: 20px;
+    }
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      margin-right: 10px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .legend-color {
+      width: 12px;
+      height: 12px;
+      margin-right: 5px;
+      display: inline-block;
+    }
+    button {
+      margin-top: 10px;
+      font-size: 12px;
+      cursor: pointer;
     }
   </style>
 </head>
 <body>
-<div class="container mt-4">
-  <h1 class="text-center">Analyse des disciplines en fonction des caractéristiques</h1>
-  <div id="chart" class="d-flex justify-content-center mt-4"></div>
-  <div class="tooltip"></div>
-</div>
-<script src="question_b.js"></script>
+<h1>Analyse des profils des disciplines</h1>
+<p>Axes représentés : Taux de réponse, Taux d’insertion, % Emploi Temps Plein, % de Femmes</p>
+<svg id="pcp" width="900" height="500"></svg>
+<div id="tooltip"></div>
+<div id="legendContainer"></div>
+<button id="resetButton">Reset</button>
+
+<script>
+  // Dimensions et marges
+  const margin = { top: 30, right: 40, bottom: 10, left: 40 },
+          width = 900 - margin.left - margin.right,
+          height = 500 - margin.top - margin.bottom;
+
+  // Sélection de l'SVG et création du groupe pour le graphique
+  const svg = d3.select("#pcp")
+          .append("g")
+          .attr("transform", `translate(${margin.left},${margin.top})`);
+
+  // Création du tooltip
+  const tooltip = d3.select("#tooltip");
+
+  // Charger le fichier insertion_master.txt depuis le même dossier
+  d3.text("insertion_master.txt").then(function(rawData) {
+    const lines = rawData.split("\n").slice(1);
+    const data = [];
+
+    lines.forEach(line => {
+      // Expression régulière pour extraire année, établissement et le reste
+      const match = line.trim().match(/^(\d{4})\s+(.+?)\s{2,}(.+)$/);
+      if(match) {
+        const annee = match[1];
+        const etablissement = match[2];
+        let reste = match[3];
+        let resteCols = reste.split(/\s{2,}/);
+        let nouvellesColonnes = [];
+        resteCols.forEach((col, index) => {
+          if(index >= 2) {
+            if(col.includes(" ") && /\d \d/.test(col)) {
+              nouvellesColonnes.push(...col.split(/\s+/));
+            } else if(col.match(/^\d+\s+ns$/)) {
+              nouvellesColonnes.push(...col.split(/\s+/));
+            } else {
+              nouvellesColonnes.push(col);
+            }
+          } else {
+            nouvellesColonnes.push(col);
+          }
+        });
+        let cols = [annee, etablissement, ...nouvellesColonnes];
+        while(cols.length < 21) cols.push('');
+
+        // Récupération des variables importantes
+        const nb_reponse = parseInt(cols[6]) || 0;
+        const taux_reponse = cols[7] === "ns" ? null : parseFloat(cols[7]);
+        const taux_insertion = cols[9] === "ns" ? null : parseFloat(cols[9]);
+        const empTP = parseInt(cols[12]) || 0;  // EMP_Temps_Plein
+        const femmes = parseInt(cols[20]) || 0;
+
+        data.push({
+          discipline: cols[4],
+          taux_reponse: taux_reponse,
+          taux_insertion: taux_insertion,
+          nb_reponse: nb_reponse,
+          empTP: empTP,
+          femmes: femmes
+        });
+      }
+    });
+
+    // Filtrer les enregistrements valides
+    const validData = data.filter(d =>
+            d.taux_reponse !== null && d.taux_reponse >= 0 && d.taux_reponse <= 100 &&
+            d.taux_insertion !== null && d.taux_insertion >= 0 && d.taux_insertion <= 100 &&
+            d.nb_reponse > 0 &&
+            d.empTP <= d.nb_reponse &&
+            d.femmes <= d.nb_reponse
+    );
+
+    // Agréger par discipline
+    const aggregated = Array.from(d3.group(validData, d => d.discipline), ([disc, arr]) => {
+      return {
+        discipline: disc,
+        taux_reponse: d3.mean(arr, d => d.taux_reponse),
+        taux_insertion: d3.mean(arr, d => d.taux_insertion),
+        emploiTP: d3.mean(arr, d => (d.empTP / d.nb_reponse) * 100),
+        pourcentage_femmes: d3.mean(arr, d => (d.femmes / d.nb_reponse) * 100)
+      };
+    });
+
+    // Conserver uniquement les disciplines avec des valeurs cohérentes (dans [0,100])
+    const filteredAggregated = aggregated.filter(d =>
+            d.taux_reponse >= 0 && d.taux_reponse <= 100 &&
+            d.taux_insertion >= 0 && d.taux_insertion <= 100 &&
+            d.emploiTP >= 0 && d.emploiTP <= 100 &&
+            d.pourcentage_femmes >= 0 && d.pourcentage_femmes <= 100
+    );
+
+    // Création d'une échelle de couleurs unique pour chaque discipline
+    const color = d3.scaleOrdinal()
+            .domain(filteredAggregated.map(d => d.discipline))
+            .range(d3.schemeCategory10);
+
+    // Dimensions à représenter dans le Parallel Coordinates Plot
+    const dimensions = ["taux_reponse", "taux_insertion", "emploiTP", "pourcentage_femmes"];
+
+    // Échelle en x pour positionner chaque axe
+    const x = d3.scalePoint()
+            .domain(dimensions)
+            .range([0, width]);
+
+    // Échelles en y pour chaque dimension (fixées sur [0,100])
+    const y = {};
+    dimensions.forEach(dim => {
+      y[dim] = d3.scaleLinear()
+              .domain([0, 100])
+              .range([height, 0]);
+    });
+
+    // Générateur de ligne pour chaque discipline
+    const line = d3.line();
+
+    // Ajout des lignes pour chaque discipline, avec couleur selon la discipline.
+    svg.selectAll("path.line")
+            .data(filteredAggregated)
+            .enter()
+            .append("path")
+            .attr("class", "line")
+            .attr("d", d => line(dimensions.map(p => [x(p), y[p](d[p])])))
+            .attr("stroke", d => color(d.discipline))
+            .attr("fill", "none")
+            .attr("opacity", 0.7)
+            .on("mouseover", function(event, d) {
+              // Mise en évidence de la ligne survolée
+              svg.selectAll("path.line")
+                      .transition().duration(200)
+                      .style("opacity", 0.1);
+              d3.select(this)
+                      .transition().duration(200)
+                      .style("opacity", 1)
+                      .style("stroke-width", 7); // Lignes survolées plus épaisses
+              // Affichage du tooltip
+              tooltip.transition().duration(200).style("opacity", 0.9);
+              tooltip.html(`<strong>${d.discipline}</strong><br>
+                          Taux réponse : ${d.taux_reponse.toFixed(1)}%<br>
+                          Taux insertion : ${d.taux_insertion.toFixed(1)}%<br>
+                          % Emploi TP : ${d.emploiTP.toFixed(1)}%<br>
+                          % Femmes : ${d.pourcentage_femmes.toFixed(1)}%`)
+                      .style("left", (event.pageX + 10) + "px")
+                      .style("top", (event.pageY - 28) + "px");
+            })
+            .on("mouseout", function() {
+              svg.selectAll("path.line")
+                      .transition().duration(200)
+                      .style("opacity", 0.7)
+                      .style("stroke-width", 4); // Retour à l'épaisseur de base
+              tooltip.transition().duration(500).style("opacity", 0);
+            });
+
+    // Ajout des axes pour chaque dimension
+    dimensions.forEach(dim => {
+      // Axe vertical pour chaque dimension
+      svg.append("g")
+              .attr("class", "axis")
+              .attr("transform", `translate(${x(dim)},0)`)
+              .call(d3.axisLeft(y[dim]).ticks(5));
+
+      // Label en haut de chaque axe
+      svg.append("text")
+              .attr("class", "label")
+              .attr("x", x(dim))
+              .attr("y", -10)
+              .text(dim.replace("_", " "));
+    });
+
+    // Création de la légende interactive
+    const legendContainer = d3.select("#legendContainer");
+
+    const legendItems = legendContainer.selectAll("div.legend-item")
+            .data(filteredAggregated)
+            .enter()
+            .append("div")
+            .attr("class", "legend-item")
+            .html(d => `<div class="legend-color" style="background-color:${color(d.discipline)};"></div><span>${d.discipline}</span>`)
+            .on("click", function(event, d) {
+              // Au clic, mettre en évidence la ligne correspondante et atténuer les autres
+              svg.selectAll("path.line")
+                      .transition().duration(200)
+                      .style("opacity", dd => (dd.discipline === d.discipline ? 1 : 0.1))
+                      .style("stroke-width", dd => (dd.discipline === d.discipline ? 7 : 4));
+            });
+
+    // Bouton Reset pour revenir à l'affichage initial
+    d3.select("#resetButton")
+            .on("click", function() {
+              svg.selectAll("path.line")
+                      .transition().duration(200)
+                      .style("opacity", 0.7)
+                      .style("stroke-width", 4);
+            });
+
+  }).catch(err => {
+    console.error("Erreur lors du chargement du fichier :", err);
+  });
+</script>
 </body>
 </html>

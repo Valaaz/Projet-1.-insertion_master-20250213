@@ -1,34 +1,248 @@
 <!DOCTYPE html>
-<html lang="fr">
-
+<html>
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-  <script src="https://d3js.org/d3.v4.min.js"></script>
-  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css"
-        integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh" crossorigin="anonymous">
-  <title>Évolution du taux d'insertion</title>
+  <title>Evolution du taux d'insertion par discipline (menu de sélection)</title>
+  <script src="https://d3js.org/d3.v6.min.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 20px;
+    }
+    #menu {
+      margin-bottom: 15px;
+    }
+    .chart {
+      border: 1px solid #ccc;
+    }
+    .axis path,
+    .axis line {
+      fill: none;
+      stroke: #000;
+      shape-rendering: crispEdges;
+    }
+    /* Légende globale pour les situations */
+    #legend {
+      margin-top: 10px;
+    }
+    .legend-item {
+      display: inline-flex;
+      align-items: center;
+      margin-right: 15px;
+      font-size: 14px;
+    }
+    .legend-color {
+      width: 12px;
+      height: 12px;
+      margin-right: 5px;
+      display: inline-block;
+    }
+  </style>
 </head>
-
 <body>
-<div class="container">
-  <h1>Évolution du taux d'insertion par discipline</h1>
-</div>
-<div class="container">
-  <div class="row">
-    <div class="col-xs-12 col-md-10 col-lg-10">
-      <svg id="svg1" width="100%" height="600"></svg>
-      <svg id="svg2" width="100%" height="600"></svg>
-    </div>
-  </div>
-</div>
-<script src="master.js"></script>
-<script src="https://code.jquery.com/jquery-3.4.1.slim.min.js"
-        integrity="sha384-J6qa4849blE2+poT4WnyKhv5vZF5SrPo0iEjwBvKU7imGFAV0wwj1yYfoRSJoZ+n"
-        crossorigin="anonymous"></script>
-<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/js/bootstrap.min.js"
-        integrity="sha384-wfSDF2E50Y2D1uUdj0O3uMBJnjuUD4Ih7YwaYd1iqfktj0Uod8GCExl3Og8ifwB6"
-        crossorigin="anonymous"></script>
-</body>
 
+<h1>Evolution du taux d'insertion par discipline</h1>
+
+<!-- Menu déroulant pour choisir la discipline -->
+<div id="menu">
+  <label for="disciplineSelect">Choisir une discipline :</label>
+  <select id="disciplineSelect"></select>
+</div>
+
+<!-- Conteneur de la légende (pour distinguer les situations) -->
+<div id="legend"></div>
+
+<!-- Conteneur du graphique -->
+<svg id="chart" width="700" height="400" class="chart"></svg>
+
+<script>
+  // Dimensions du graphique (zone dessinable)
+  const margin = { top: 30, right: 30, bottom: 30, left: 50 },
+          width = 700 - margin.left - margin.right,
+          height = 400 - margin.top - margin.bottom;
+
+  // Sélection du SVG
+  const svg = d3.select("#chart")
+          .append("g")
+          .attr("transform", `translate(${margin.left},${margin.top})`);
+
+  // Variables globales
+  let allData = [];       // Contiendra toutes les données
+  let allDisciplines = []; // Liste de disciplines
+  let colorScale;         // Échelle de couleur pour les situations
+  let xScale, yScale;     // Échelles X (années) et Y (taux_insertion)
+  let xAxis, yAxis;       // Axes D3
+  let xAxisGroup, yAxisGroup; // Groupes d'axes D3
+
+  // Charger et parser le fichier insertion_master.txt
+  d3.text("insertion_master.txt").then(function(rawData) {
+
+    // Ignorer la première ligne (en-tête) et séparer en lignes
+    const lines = rawData.split("\n").slice(1);
+    let data = [];
+
+    lines.forEach(line => {
+      // Expression régulière pour extraire (année) + (établissement) + (le reste)
+      var match = line.trim().match(/^(\d{4})\s+(.+?)\s{2,}(.+)$/);
+      if (match) {
+        const annee = match[1];
+        const etablissement = match[2];
+        let reste = match[3];
+
+        let resteCols = reste.split(/\s{2,}/);
+        let nouvellesColonnes = [];
+        resteCols.forEach((col, index) => {
+          if (index >= 2) {
+            if (col.includes(" ") && /\d \d/.test(col)) {
+              nouvellesColonnes.push(...col.split(/\s+/));
+            } else if (col.match(/^\d+\s+ns$/)) {
+              nouvellesColonnes.push(...col.split(/\s+/));
+            } else {
+              nouvellesColonnes.push(col);
+            }
+          } else {
+            nouvellesColonnes.push(col);
+          }
+        });
+
+        let cols = [annee, etablissement, ...nouvellesColonnes];
+        while (cols.length < 20) cols.push('');
+
+        const tauxInsertion = cols[9] === "ns" ? null : parseFloat(cols[9]);
+
+        data.push({
+          annee: +annee,
+          etablissement: cols[1],
+          academie: cols[2],
+          domaine: cols[3],
+          discipline: cols[4],
+          situation: cols[5],
+          nb_reponse: parseInt(cols[6]) || 0,
+          taux_insertion: tauxInsertion
+        });
+      }
+    });
+
+    // Filtrer les enregistrements sans taux_insertion
+    data = data.filter(d => d.taux_insertion !== null);
+
+    // Stocker dans la variable globale
+    allData = data;
+
+    // Extraire la liste des disciplines distinctes
+    allDisciplines = Array.from(new Set(data.map(d => d.discipline))).sort(d3.ascending);
+
+    // Peupler le menu <select> avec les disciplines
+    const select = d3.select("#disciplineSelect");
+    select.selectAll("option")
+            .data(allDisciplines)
+            .enter()
+            .append("option")
+            .attr("value", d => d)
+            .text(d => d);
+
+    // Récupérer la liste des situations distinctes (ex: "18 mois...", "30 mois...")
+    let allSituations = Array.from(new Set(data.map(d => d.situation)));
+
+    // Définir l'échelle de couleur pour les situations
+    colorScale = d3.scaleOrdinal()
+            .domain(allSituations)
+            .range(["steelblue", "tomato", "orange", "green", "purple"]);
+
+    // Créer la légende globale
+    const legend = d3.select("#legend");
+    legend.selectAll(".legend-item")
+            .data(allSituations)
+            .enter()
+            .append("div")
+            .attr("class", "legend-item")
+            .html(d => {
+              return `
+            <div class="legend-color" style="background-color:${colorScale(d)};"></div>
+            <span>${d}</span>
+          `;
+            });
+
+    // Créer groupes d'axes (une seule fois)
+    xAxisGroup = svg.append("g")
+            .attr("transform", `translate(0,${height})`)
+            .attr("class", "x axis");
+    yAxisGroup = svg.append("g")
+            .attr("class", "y axis");
+
+    // Définir des axes initiaux
+    xScale = d3.scaleLinear().range([0, width]);
+    yScale = d3.scaleLinear().range([height, 0]);
+    xAxis = d3.axisBottom(xScale).ticks(5).tickFormat(d3.format("d"));
+    yAxis = d3.axisLeft(yScale).ticks(5);
+
+    // Par défaut, afficher la première discipline du menu
+    const defaultDiscipline = allDisciplines[0];
+    renderChart(defaultDiscipline);
+
+    // Quand l'utilisateur change la discipline, on met à jour le graphique
+    select.on("change", function() {
+      const selected = this.value;
+      renderChart(selected);
+    });
+
+  }).catch(err => {
+    console.error("Erreur chargement du fichier insertion_master.txt :", err);
+  });
+
+  // Fonction pour mettre à jour le graphique selon la discipline
+  function renderChart(discipline) {
+    // Filtrer les données sur la discipline choisie
+    const filtered = allData.filter(d => d.discipline === discipline);
+
+    // Groupement par situation
+    const situations = d3.group(filtered, d => d.situation);
+
+    // Définir le domaine en X = extent des années
+    xScale.domain(d3.extent(filtered, d => d.annee));
+
+    // Définir le domaine en Y = [0, max du taux_insertion]
+    yScale.domain([0, d3.max(filtered, d => d.taux_insertion)]).nice();
+
+    // Mettre à jour les axes
+    xAxisGroup.transition().call(xAxis);
+    yAxisGroup.transition().call(yAxis);
+
+    // Supprimer les anciennes courbes avant de redessiner
+    svg.selectAll(".line-path").remove();
+    svg.selectAll(".point-circle").remove();
+
+    // Générateur de ligne
+    const lineGen = d3.line()
+            .x(d => xScale(d.annee))
+            .y(d => yScale(d.taux_insertion));
+
+    // Pour chaque situation, tracer la courbe
+    situations.forEach((values, key) => {
+      // trier par année
+      values.sort((a, b) => a.annee - b.annee);
+
+      // tracer la ligne
+      svg.append("path")
+              .datum(values)
+              .attr("class", "line-path")
+              .attr("fill", "none")
+              .attr("stroke", colorScale(key))
+              .attr("stroke-width", 2)
+              .attr("d", lineGen);
+
+      // tracer les cercles
+      svg.selectAll(".point-circle-" + key.replace(/\s/g, ""))
+              .data(values)
+              .enter()
+              .append("circle")
+              .attr("class", "point-circle")
+              .attr("cx", d => xScale(d.annee))
+              .attr("cy", d => yScale(d.taux_insertion))
+              .attr("r", 3)
+              .attr("fill", colorScale(key));
+    });
+  }
+</script>
+</body>
 </html>

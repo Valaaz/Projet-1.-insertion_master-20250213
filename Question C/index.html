@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="utf-8">
+    <title>Performance économique et taux d'insertion par discipline</title>
+    <script src="https://d3js.org/d3.v6.min.js"></script>
+    <style>
+        body {
+            font-family: sans-serif;
+            margin: 20px;
+        }
+        #controls {
+            margin-bottom: 20px;
+        }
+        svg {
+            border: 1px solid #ccc;
+        }
+        .axis path,
+        .axis line {
+            fill: none;
+            stroke: #000;
+            shape-rendering: crispEdges;
+        }
+        #tooltip {
+            position: absolute;
+            background: #fff;
+            padding: 5px;
+            border: 1px solid #ccc;
+            opacity: 0;
+            pointer-events: none;
+            font-size: 12px;
+        }
+        /* Légende externe */
+        #legendContainer {
+            margin-top: 20px;
+        }
+        .legend-item {
+            display: inline-flex;
+            align-items: center;
+            margin-right: 10px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            margin-right: 5px;
+            display: inline-block;
+        }
+        button {
+            margin-top: 10px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+<h1>Performance économique et taux d'insertion par discipline</h1>
+<div id="controls">
+    <label for="situationSelect">Situation :</label>
+    <select id="situationSelect"></select>
+</div>
+<svg id="scatter" width="800" height="500"></svg>
+<div id="tooltip"></div>
+<!-- La légende est maintenant en dehors du SVG -->
+<div id="legendContainer"></div>
+<button id="resetButton">Reset</button>
+
+<script>
+    const margin = {top: 40, right: 40, bottom: 60, left: 60},
+        width = 800 - margin.left - margin.right,
+        height = 500 - margin.top - margin.bottom;
+
+    const svg = d3.select("#scatter")
+        .append("g")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+    const tooltip = d3.select("#tooltip");
+
+    let allData = [];
+    let situations = [];
+
+    d3.text("insertion_master.txt").then(function(rawData) {
+        const lines = rawData.split("\n").slice(1);
+        const data = [];
+
+        lines.forEach(line => {
+            const match = line.trim().match(/^(\d{4})\s+(.+?)\s{2,}(.+)$/);
+            if(match) {
+                const annee = +match[1];
+                const etablissement = match[2];
+                let reste = match[3];
+                let resteCols = reste.split(/\s{2,}/);
+                let nouvellesColonnes = [];
+                resteCols.forEach((col, index) => {
+                    if(index >= 2) {
+                        if(col.includes(" ") && /\d \d/.test(col)) {
+                            nouvellesColonnes.push(...col.split(/\s+/));
+                        } else if(col.match(/^\d+\s+ns$/)) {
+                            nouvellesColonnes.push(...col.split(/\s+/));
+                        } else {
+                            nouvellesColonnes.push(col);
+                        }
+                    } else {
+                        nouvellesColonnes.push(col);
+                    }
+                });
+                let cols = [match[1], etablissement, ...nouvellesColonnes];
+                while(cols.length < 21) cols.push('');
+
+                // Variables utiles : taux_insertion (colonne 9), Salaire Brut Annuel Estimé (colonne 14),
+                // Situation (colonne 5) et Discipline (colonne 4).
+                const tauxInsertion = cols[9] === "ns" ? null : parseFloat(cols[9]);
+                const salaireBrut = cols[14] === "ns" ? null : parseFloat(cols[14]);
+                const situation = cols[5];
+                const discipline = cols[4];
+
+                if(tauxInsertion !== null && tauxInsertion >= 0 && tauxInsertion <= 100 &&
+                    salaireBrut !== null && salaireBrut > 0) {
+                    data.push({
+                        annee: annee,
+                        etablissement: etablissement,
+                        discipline: discipline,
+                        situation: situation,
+                        taux_insertion: tauxInsertion,
+                        salaireBrut: salaireBrut
+                    });
+                }
+            }
+        });
+
+        allData = data;
+
+        situations = Array.from(new Set(data.map(d => d.situation))).sort();
+        situations.unshift("Tous");
+
+        d3.select("#situationSelect")
+            .selectAll("option")
+            .data(situations)
+            .enter()
+            .append("option")
+            .attr("value", d => d)
+            .text(d => d);
+
+        renderScatter("Tous");
+
+        d3.select("#situationSelect").on("change", function() {
+            renderScatter(this.value);
+        });
+
+    }).catch(err => {
+        console.error("Erreur lors du chargement du fichier:", err);
+    });
+
+    function renderScatter(selectedSituation) {
+        let dataFiltered = selectedSituation === "Tous" ? allData : allData.filter(d => d.situation === selectedSituation);
+
+        svg.selectAll("*").remove();
+
+        const xScale = d3.scaleLinear()
+            .domain(d3.extent(dataFiltered, d => d.salaireBrut))
+            .nice()
+            .range([0, width]);
+
+        const yScale = d3.scaleLinear()
+            .domain([0, 100])
+            .range([height, 0]);
+
+        const xAxis = d3.axisBottom(xScale);
+        const yAxis = d3.axisLeft(yScale);
+
+        svg.append("g")
+            .attr("class", "x axis")
+            .attr("transform", `translate(0,${height})`)
+            .call(xAxis)
+            .append("text")
+            .attr("x", width / 2)
+            .attr("y", 40)
+            .attr("fill", "#000")
+            .style("font-size", "14px")
+            .style("text-anchor", "middle")
+            .text("Salaire Brut Annuel Estimé (en €)");
+
+        svg.append("g")
+            .attr("class", "y axis")
+            .call(yAxis)
+            .append("text")
+            .attr("transform", "rotate(-90)")
+            .attr("x", -height/2)
+            .attr("y", -40)
+            .attr("fill", "#000")
+            .style("font-size", "14px")
+            .style("text-anchor", "middle")
+            .text("Taux d'insertion (%)");
+
+        // Pour éviter l'utilisation de couleurs similaires, on génère une couleur unique par discipline
+        // en utilisant d3.interpolateRainbow.
+        const disciplines = Array.from(new Set(dataFiltered.map(d => d.discipline)));
+        const color = d3.scaleOrdinal()
+            .domain(disciplines)
+            .range(disciplines.map((d, i) => d3.interpolateRainbow(i / disciplines.length)));
+
+        svg.selectAll("circle")
+            .data(dataFiltered)
+            .enter()
+            .append("circle")
+            .attr("cx", d => xScale(d.salaireBrut))
+            .attr("cy", d => yScale(d.taux_insertion))
+            .attr("r", 6)
+            .attr("fill", d => color(d.discipline))
+            .attr("opacity", 0.8)
+            .on("mouseover", function(event, d) {
+                d3.select(this).transition().duration(200).attr("r", 10);
+                tooltip.transition().duration(200).style("opacity", 0.9);
+                tooltip.html(`<strong>${d.discipline}</strong><br>
+                          Établissement: ${d.etablissement}<br>
+                          Situation: ${d.situation}<br>
+                          Salaire Brut: ${d.salaireBrut}<br>
+                          Taux d'insertion: ${d.taux_insertion}%`)
+                    .style("left", (event.pageX + 10) + "px")
+                    .style("top", (event.pageY - 28) + "px");
+            })
+            .on("mouseout", function() {
+                d3.select(this).transition().duration(200).attr("r", 6);
+                tooltip.transition().duration(500).style("opacity", 0);
+            });
+
+        // Création de la légende externe
+        const legendContainer = d3.select("#legendContainer");
+        legendContainer.selectAll("*").remove();
+
+        const legendItems = legendContainer.selectAll("div.legend-item")
+            .data(disciplines)
+            .enter()
+            .append("div")
+            .attr("class", "legend-item")
+            .style("cursor", "pointer")
+            .on("click", function(event, d) {
+                svg.selectAll("circle")
+                    .transition().duration(200)
+                    .style("opacity", dd => (dd.discipline === d ? 1 : 0.1));
+            });
+
+        legendItems.append("div")
+            .attr("class", "legend-color")
+            .style("background-color", d => color(d));
+
+        legendItems.append("div")
+            .text(d => d);
+
+        d3.select("#resetButton").on("click", function() {
+            svg.selectAll("circle")
+                .transition().duration(200)
+                .style("opacity", 0.8);
+        });
+    }
+</script>
+</body>
+</html>
