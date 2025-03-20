@@ -76,23 +76,26 @@
 
   // Charger et parser le fichier insertion_master.txt
   d3.text("insertion_master.txt").then(function(rawData) {
-
     // Ignorer la première ligne (en-tête) et séparer en lignes
     const lines = rawData.split("\n").slice(1);
     let data = [];
 
     lines.forEach(line => {
       // Expression régulière pour extraire (année) + (établissement) + (le reste)
-      var match = line.trim().match(/^(\d{4})\s+(.+?)\s{2,}(.+)$/);
+      // Exemple: "2010  Mulhouse - Haute Alsace   Strasbourg   ..."
+      const match = line.trim().match(/^(\d{4})\s+(.+?)\s{2,}(.+)$/);
       if (match) {
-        const annee = match[1];
-        const etablissement = match[2];
-        let reste = match[3];
+        const anneeStr       = match[1];  // ex: "2010"
+        const etablissement  = match[2];  // ex: "Mulhouse - Haute Alsace"
+        let reste            = match[3];  // ex: "Strasbourg   Lettres, langues, arts  ..."
 
+        // Découper le reste en colonnes par 2 espaces ou plus
         let resteCols = reste.split(/\s{2,}/);
         let nouvellesColonnes = [];
         resteCols.forEach((col, index) => {
           if (index >= 2) {
+            // Si on trouve un champ avec plusieurs nombres séparés par un espace
+            // on découpe encore
             if (col.includes(" ") && /\d \d/.test(col)) {
               nouvellesColonnes.push(...col.split(/\s+/));
             } else if (col.match(/^\d+\s+ns$/)) {
@@ -105,26 +108,63 @@
           }
         });
 
-        let cols = [annee, etablissement, ...nouvellesColonnes];
-        while (cols.length < 20) cols.push('');
+        // On reconstitue un tableau de colonnes complet
+        let cols = [anneeStr, etablissement, ...nouvellesColonnes];
+        // Assurer qu'on a au moins 21 colonnes
+        while (cols.length < 21) {
+          cols.push('');
+        }
 
-        const tauxInsertion = cols[9] === "ns" ? null : parseFloat(cols[9]);
+        // Convertir l'année en entier et vérifier sa validité
+        const annee = parseInt(cols[0], 10);
+        if (isNaN(annee) || annee < 1900 || annee > 2100) {
+          // On ignore la ligne si l'année n'est pas un entier correct
+          return;
+        }
 
+        // Extraire la discipline (col[4]) et la situation (col[5])
+        const discipline = cols[4].trim();
+        const situation  = cols[5].trim();
+
+        // Si discipline ou situation est vide ou "ns", on ignore
+        if (!discipline || discipline.toLowerCase() === "ns") {
+          return;
+        }
+        if (!situation || situation.toLowerCase() === "ns") {
+          return;
+        }
+
+        // Extraire nb_reponse (col[6]) et ignorer si 0
+        const nb_reponse = parseInt(cols[6], 10);
+        if (!nb_reponse || nb_reponse === 0) {
+          return;
+        }
+
+        // Lire la colonne 9 pour Taux_Insertion
+        let tauxInsertionStr = cols[9].trim();
+        if (!tauxInsertionStr || tauxInsertionStr.toLowerCase() === "ns") {
+          // Si c'est vide ou "ns", on ignore la ligne
+          return;
+        }
+        let tauxInsertionVal = parseFloat(tauxInsertionStr);
+        // On ignore si la valeur est NaN, 0, ou hors de [1..100]
+        if (isNaN(tauxInsertionVal) || tauxInsertionVal < 1 || tauxInsertionVal > 100) {
+          return;
+        }
+
+        // Tout est OK, on enregistre
         data.push({
-          annee: +annee,
+          annee: annee,
           etablissement: cols[1],
           academie: cols[2],
           domaine: cols[3],
-          discipline: cols[4],
-          situation: cols[5],
-          nb_reponse: parseInt(cols[6]) || 0,
-          taux_insertion: tauxInsertion
+          discipline: discipline,
+          situation: situation,
+          nb_reponse: nb_reponse,
+          taux_insertion: tauxInsertionVal
         });
       }
     });
-
-    // Filtrer les enregistrements sans taux_insertion
-    data = data.filter(d => d.taux_insertion !== null);
 
     // Stocker dans la variable globale
     allData = data;
